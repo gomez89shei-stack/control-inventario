@@ -102,7 +102,7 @@ function ps(txt){txt=txt.replace(/^\uFEFF/,"");const raw=[],errs=[];txt.split(/\
 const map=new Map();raw.forEach(r=>{const key=r.n.toLowerCase();if(map.has(key)){const e=map.get(key);r.locs.forEach(l=>{if(!e.locs.some(x=>x.toLowerCase()==l.toLowerCase()))e.locs.push(l)});if(!e.cat)e.cat=r.cat;if(!e.u)e.u=r.u;e.min=Math.max(e.min,r.min);e.a=e.a||r.a}else map.set(key,{...r,locs:[...r.locs]})});
 const rows=[...map.values()];S.rows=rows;S.errs=errs;
 const ex=rows.filter(r=>D.prods.some(p=>p.n.toLowerCase()==r.n.toLowerCase())).length;
-return`<div class=card><b>Se encontraron ${rows.length} productos${raw.length>rows.length?` (a partir de ${raw.length} filas, combinando ubicaciones repetidas)`:""}.</b><br><span class=mu>${rows.length-ex} nuevos · ${ex} ya existen (se actualizan y se les suman ubicaciones nuevas). Categorías, unidades y ubicaciones nuevas se crean solas.</span></div>${errs.length?`<div class=card style="border-color:var(--er)"><b>${errs.length} filas tienen información incompleta (no se importarán):</b><br>${errs.join("<br>")}</div>`:""}${rows.length?`<button class="btn ok" onclick="A.doImp()">IMPORTAR PRODUCTOS</button>`:""}`}
+return`<div class=card><b>Se encontraron ${rows.length} productos${raw.length>rows.length?` (a partir de ${raw.length} filas, combinando ubicaciones repetidas)`:""}.</b><br><span class=mu>${rows.length-ex} nuevos · ${ex} ya existen (se actualizan y se les suman ubicaciones nuevas). Categorías, unidades y ubicaciones nuevas se crean solas.</span></div>${errs.length?`<div class=card style="border-color:var(--er)"><b>${errs.length} filas tienen información incompleta (no se importarán):</b><br>${errs.join("<br>")}</div>`:""}${rows.length?`<button class="btn ok" onclick="A.doImp()" ${S.busy?"disabled":""}>${S.busy?"GUARDANDO…":"IMPORTAR PRODUCTOS"}</button>`:""}`}
 // ---------- acciones ----------
 const A={
 go(v){S.v=v;R();scrollTo(0,0)},in(id){S.u=id;A.go(adm()?"dash":"home")},out(){FB.out()},
@@ -139,13 +139,21 @@ if(ext=="xlsx"||ext=="xls"){r.onload=()=>{try{const wb=XLSX.read(r.result,{type:
 else{r.onload=()=>{S.ip=r.result;R()};r.readAsText(f)}},
 parse(v){S.ip=v;$("#pv").innerHTML=ps(v)},
 ex(){S.ip="Producto;Categoría;Unidad;Stock mínimo;Ubicación\nSprite 500cc;Gaseosas;C/U;20;Heladera Caja\nStella Artois 330cc;Cervezas;C/U;20;Cámara de frío\nVino Torrontés 750cc;Vinos;C/U;6;Depósito Escalera\nFernet 750cc;Destilados;C/U;3;Casino/Depósito Escalera\nSoda sifón;Aguas;;12;Heladera Caja";R()},
-doImp(){let n=0;S.rows.forEach(r=>{let c=D.cats.find(x=>x.n.toLowerCase()==r.cat.toLowerCase());if(!c){c={id:nid(),n:r.cat,i:"📦",a:1};D.cats.push(c)}if(!D.units.includes(r.u))D.units.push(r.u);const ids=r.locs.map(nm=>{let l=D.locs.find(x=>x.n.toLowerCase()==nm.toLowerCase());if(!l){l={id:nid(),n:nm,a:1};D.locs.push(l)}return l.id});const p=D.prods.find(x=>x.n.toLowerCase()==r.n.toLowerCase());if(p){const u=[...p.locs];ids.forEach(id=>{if(!u.includes(id))u.push(id)});Object.assign(p,{cat:c.id,u:r.u,min:r.min,locs:u,a:r.a?1:0})}else D.prods.push({id:nid(),n:r.n,cat:c.id,u:r.u,min:r.min,locs:ids,a:r.a?1:0});n++});log("Importó "+n+" productos");T(n+" productos importados ✅");S.ip="";A.go("prods")}};
+async doImp(){if(S.busy)return;S.busy=true;R();const items=[],newCats=[],newLocs=[],touched=[];
+S.rows.forEach(r=>{let c=D.cats.find(x=>x.n.toLowerCase()==r.cat.toLowerCase());if(!c){c={id:nid(),n:r.cat,i:"📦",a:1};D.cats.push(c);newCats.push(c)}if(!D.units.includes(r.u))D.units.push(r.u);
+const ids=r.locs.map(nm=>{let l=D.locs.find(x=>x.n.toLowerCase()==nm.toLowerCase());if(!l){l={id:nid(),n:nm,a:1};D.locs.push(l);newLocs.push(l)}return l.id});
+const p=D.prods.find(x=>x.n.toLowerCase()==r.n.toLowerCase());if(p){const u=[...p.locs];ids.forEach(id=>{if(!u.includes(id))u.push(id)});Object.assign(p,{cat:c.id,u:r.u,min:r.min,locs:u,a:r.a?1:0})}else{const np={id:nid(),n:r.n,cat:c.id,u:r.u,min:r.min,locs:ids,a:r.a?1:0};D.prods.push(np)}touched.push(r.n.toLowerCase())});
+const prodDocs=D.prods.filter(p=>touched.includes(p.n.toLowerCase()));
+items.push(...newCats.map(x=>({col:"cats",id:x.id,data:x})),...newLocs.map(x=>({col:"locs",id:x.id,data:x})),...prodDocs.map(x=>({col:"prods",id:x.id,data:x})));
+try{if(window.FBbatch)await window.FBbatch(items);
+log("Importó "+prodDocs.length+" productos ("+items.length+" documentos)");T(prodDocs.length+" productos importados y guardados ✅");S.ip="";S.busy=false;A.go("prods")}
+catch(e){console.error(e);S.busy=false;alert("No se pudo guardar en la base de datos ("+(e.code||e.message)+"). Los datos NO se importaron todavía — revisá tu conexión (o si un bloqueador de anuncios está activo) y tocá IMPORTAR PRODUCTOS de nuevo.");R()}}};
 function R(){const y=scrollY;th();const h=S.v=="login"?V.login():V[S.v]();$("#app").innerHTML=h+(S.M?modal():"");scrollTo(0,y);if(S.af&&S.v=="count"){S.af=0;const a=[...document.querySelectorAll(".q input")],e=a.find(i=>i.value==="")||a[0];e&&e.focus({preventScroll:true})}}
 R();
 </script><script type="module">
 import {initializeApp,deleteApp} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,signOut,deleteUser} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
-import {getFirestore,doc,getDoc,setDoc,collection,onSnapshot} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+import {getFirestore,doc,getDoc,setDoc,collection,onSnapshot,writeBatch} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 const cfg={apiKey:"AIzaSyAOExR6plWiv-kU5FycnezWMO3EH_5x6jY",authDomain:"control-inventario-94604.firebaseapp.com",projectId:"control-inventario-94604",storageBucket:"control-inventario-94604.firebasestorage.app",messagingSenderId:"59061739353",appId:"1:59061739353:web:9ceaaf843ae04587213648"};
 const app=initializeApp(cfg),auth=getAuth(app),db=getFirestore(app);
 const COLS=["prods","cats","locs","users","counts","moves","audit"],SN={},soft=["count","mov","close","review","start","done"];
@@ -161,6 +169,7 @@ COLS.forEach(k=>subs.push(onSnapshot(collection(db,k),s=>{D[k]=s.docs.map(d=>d.d
 subs.push(onSnapshot(doc(db,"meta","main"),s=>{if(s.exists()){D.cfg=s.data().cfg;D.units=s.data().units;SN.meta=sj({cfg:D.cfg,units:D.units});if(!s.metadata.hasPendingWrites&&!soft.includes(S.v)&&!S.M)R()}else SN.meta="-"},e=>console.error(e)))}
 onAuthStateChanged(auth,async u=>{if(boot)return;if(!u){stop();reset_();return}try{await begin_(u.uid)}catch(e){reset_(e.message=="inactivo"?"Tu usuario está inactivo. Hablá con el administrador.":"No se pudo ingresar.")}});
 window.FBs=()=>{if(!auth.currentUser||!SN.users)return;COLS.forEach(k=>D[k].forEach(x=>{const j=sj(x);if(SN[k][x.id]!==j){SN[k][x.id]=j;setDoc(doc(db,k,x.id),JSON.parse(j)).catch(e=>{console.error(e);T("No se pudo guardar. Revisá la conexión o los permisos.")})}}));const m=sj({cfg:D.cfg,units:D.units});if(SN.meta&&SN.meta!==m&&adm()){SN.meta=m;setDoc(doc(db,"meta","main"),JSON.parse(m)).catch(console.error)}};
+window.FBbatch=async(items)=>{const b=writeBatch(db);items.forEach(it=>{b.set(doc(db,it.col,it.id),it.data);SN[it.col]=SN[it.col]||{};SN[it.col][it.id]=sj(it.data)});await b.commit()};
 window.FB={login:(m,u,p)=>signInWithEmailAndPassword(auth,m=="pin"?mail(u):u,m=="pin"?"ci-"+p:p),out:()=>signOut(auth),
 async reg(email,pw){boot=1;try{const c=await createUserWithEmailAndPassword(auth,email,pw);const ini=await getDoc(doc(db,"meta","init"));if(ini.exists()){await deleteUser(c.user);throw new Error("ya")}
 await setDoc(doc(db,"users",c.user.uid),{id:c.user.uid,n:"Administrador",ap:"",rol:"ADMINISTRADOR",area:"Gerencia",a:1,email});await setDoc(doc(db,"meta","init"),{ts:Date.now()});boot=0;await begin_(c.user.uid)}catch(e){boot=0;throw e}},
